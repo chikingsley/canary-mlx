@@ -1,0 +1,89 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parakeet-mlx"
+version = "0.3.1"
+description = "An implementation of the Nvidia's Parakeet models for Apple Silicon using MLX."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dacite>=1.9.2",
+    "huggingface-hub>=0.30.2",
+    "librosa>=0.11.0",
+    "mlx>=0.22.1",
+    "numpy>=2.2.5",
+    "typer>=0.15.3",
+]
+license = "Apache-2.0"
+keywords = [
+    "mlx",
+    "parakeet",
+    "asr",
+    "nvidia",
+    "apple",
+    "speech",
+    "recognition",
+    "ml",
+]
+
+[project.urls]
+Repository = "https://github.com/senstella/parakeet-mlx.git"
+Issues = "https://github.com/senstella/parakeet-mlx/issues"
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.1.0",
+    "mypy>=1.7.0",
+    "pytest>=7.0.0",
+    "pytest-cov>=4.0.0",
+    "types-PyYAML",
+    "types-requests",
+]
+
+[project.scripts]
+parakeet-mlx = "parakeet_mlx.cli:app"
+
+[tool.ruff]
+target-version = "py310"
+line-length = 88
+select = [
+    "E", "W", "F", "I", "B", "C4", "UP", "ARG", "SIM", "TCH", "PTH", "ERA", "PL", "RUF"
+]
+ignore = [
+    "E501", "B008", "PLR0913", "PLR0912", "PLR0915", "PLR2004"
+]
+
+[tool.ruff.per-file-ignores]
+"__init__.py" = ["F401"]
+"test_*.py" = ["ARG", "S101"]
+
+[tool.ruff.isort]
+known-first-party = ["parakeet_mlx"]
+
+[tool.mypy]
+python_version = "3.10"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+disallow_untyped_decorators = true
+no_implicit_optional = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+
+[[tool.mypy.overrides]]
+module = [
+    "mlx.*",
+    "librosa.*",
+    "safetensors.*",
+    "dacite.*",
+    "torch.*",
+]
+ignore_missing_imports = true

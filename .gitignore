@@ -1,3 +1,16 @@
+# Python-generated files
+__pycache__/
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+.vscode
+.mypy_cache
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
@@ -174,9 +187,9 @@ cython_debug/
 .abstra/
 
 # Visual Studio Code
-#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore 
+#  Visual Studio Code specific template is maintained in a separate VisualStudioCode.gitignore
 #  that can be found at https://github.com/github/gitignore/blob/main/Global/VisualStudioCode.gitignore
-#  and can be added to the global gitignore or merged into this file. However, if you prefer, 
+#  and can be added to the global gitignore or merged into this file. However, if you prefer,
 #  you could uncomment the following to ignore the enitre vscode folder
 # .vscode/
 
@@ -192,3 +205,18 @@ cython_debug/
 #  refer to https://docs.cursor.com/context/ignore-files
 .cursorignore
 .cursorindexingignore
+
+# python
+__pycache__/
+*.pyc
+
+# venv
+.venv/
+venv/
+env/
+
+# Large model files
+canary-1b-flash/canary-1b-flash.nemo
+parakeet-tdt-0.6b-v2/parakeet-tdt-0.6b-v2.nemo
+parakeet-tdt-0.6b-v2-mlx/model.safetensors
+canary-1b/canary-1b.nemo

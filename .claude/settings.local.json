@@ -1,0 +1,13 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python:*)",
+      "Bash(uv add:*)",
+      "Bash(uv run:*)",
+      "WebFetch(domain:huggingface.co)",
+      "WebFetch(domain:github.com)",
+      "Bash(find:*)"
+    ],
+    "deny": []
+  }
+}
