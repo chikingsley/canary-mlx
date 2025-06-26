@@ -6,7 +6,7 @@ build-backend = "hatchling.build"
 name = "canary-mlx-converter"
 version = "0.1.0"
 description = "Convert NVIDIA Canary models from NeMo to MLX format"
-readme = "README_CANARY_CONVERSION.md"
+# readme = "README_CANARY_CONVERSION.md"
 requires-python = ">=3.10"
 license = "Apache-2.0"
 authors = [
@@ -137,4 +137,9 @@ addopts = [
     "--strict-config",
     "--cov=canary_to_mlx_converter",
     "--cov=parakeet_mlx",
+]
+
+[dependency-groups]
+dev = [
+    "types-pyyaml>=6.0.12.20250516",
 ]

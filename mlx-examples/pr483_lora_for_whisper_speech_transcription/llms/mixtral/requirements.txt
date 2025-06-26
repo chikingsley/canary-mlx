@@ -1,4 +1,0 @@
-mlx
-sentencepiece
-torch
-numpy

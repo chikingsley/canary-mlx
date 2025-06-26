@@ -6,7 +6,15 @@
       "Bash(uv run:*)",
       "WebFetch(domain:huggingface.co)",
       "WebFetch(domain:github.com)",
-      "Bash(find:*)"
+      "Bash(find:*)",
+      "Bash(git lfs track:*)",
+      "Bash(git remote add:*)",
+      "Bash(git lfs:*)",
+      "Bash(git push:*)",
+      "Bash(git cherry-pick:*)",
+      "Bash(mkdir:*)",
+      "Bash(mv:*)",
+      "mcp__zen__analyze"
     ],
     "deny": []
   }
