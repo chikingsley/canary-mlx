@@ -1,9 +1,11 @@
+"""Parakeet model implementation for ASR tasks."""
+
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Callable, List, Optional
 
 import mlx.core as mx
-import mlx.nn as nn
+from mlx import nn
 
 from parakeet_mlx import tokenizer
 from parakeet_mlx.alignment import (
@@ -23,6 +25,14 @@ from parakeet_mlx.rnnt import JointArgs, JointNetwork, PredictArgs, PredictNetwo
 
 @dataclass
 class TDTDecodingArgs:
+    """Configuration for TDT (Token Duration Transducer) decoding.
+
+    Attributes:
+        model_type: Type of model, should be "tdt" for TDT models.
+        durations: List of possible token durations for TDT decoding.
+        greedy: Greedy decoding configuration dictionary or None.
+    """
+
     model_type: str
     durations: list[int]
     greedy: dict | None
@@ -30,16 +40,38 @@ class TDTDecodingArgs:
 
 @dataclass
 class RNNTDecodingArgs:
+    """Configuration for RNNT (RNN-Transducer) decoding.
+
+    Attributes:
+        greedy: Greedy decoding configuration dictionary or None.
+    """
+
     greedy: dict | None
 
 
 @dataclass
 class CTCDecodingArgs:
+    """Configuration for CTC (Connectionist Temporal Classification) decoding.
+
+    Attributes:
+        greedy: Greedy decoding configuration dictionary or None.
+    """
+
     greedy: dict | None
 
 
 @dataclass
 class ParakeetTDTArgs:
+    """Configuration arguments for Parakeet TDT model.
+
+    Attributes:
+        preprocessor: Audio preprocessing configuration.
+        encoder: Conformer encoder configuration.
+        decoder: Prediction network (decoder) configuration.
+        joint: Joint network configuration.
+        decoding: TDT-specific decoding configuration.
+    """
+
     preprocessor: PreprocessArgs
     encoder: ConformerArgs
     decoder: PredictArgs
@@ -49,6 +81,16 @@ class ParakeetTDTArgs:
 
 @dataclass
 class ParakeetRNNTArgs:
+    """Configuration arguments for Parakeet RNNT model.
+
+    Attributes:
+        preprocessor: Audio preprocessing configuration.
+        encoder: Conformer encoder configuration.
+        decoder: Prediction network (decoder) configuration.
+        joint: Joint network configuration.
+        decoding: RNNT-specific decoding configuration.
+    """
+
     preprocessor: PreprocessArgs
     encoder: ConformerArgs
     decoder: PredictArgs
@@ -58,6 +100,15 @@ class ParakeetRNNTArgs:
 
 @dataclass
 class ParakeetCTCArgs:
+    """Configuration arguments for Parakeet CTC model.
+
+    Attributes:
+        preprocessor: Audio preprocessing configuration.
+        encoder: Conformer encoder configuration.
+        decoder: Convolutional ASR decoder configuration.
+        decoding: CTC-specific decoding configuration.
+    """
+
     preprocessor: PreprocessArgs
     encoder: ConformerArgs
     decoder: ConvASRDecoderArgs
@@ -66,12 +117,26 @@ class ParakeetCTCArgs:
 
 @dataclass
 class ParakeetTDTCTCArgs(ParakeetTDTArgs):
+    """Configuration arguments for Parakeet TDT-CTC hybrid model.
+
+    Inherits from ParakeetTDTArgs and adds auxiliary CTC configuration.
+
+    Attributes:
+        aux_ctc: Auxiliary CTC configuration for the hybrid model.
+    """
+
     aux_ctc: AuxCTCArgs
 
 
 # API
 @dataclass
 class DecodingConfig:
+    """API configuration for decoding behavior.
+
+    Attributes:
+        decoding: Decoding strategy to use. Currently supports "greedy".
+    """
+
     decoding: str = "greedy"
 
 
@@ -91,7 +156,8 @@ class BaseParakeet(nn.Module):
         self, mel: mx.array, *, decoding_config: DecodingConfig = DecodingConfig()
     ) -> list[AlignedResult]:
         """
-        Generate transcription results from the Parakeet model, handling batches and single input.
+        Generate transcription results from the Parakeet model,
+        handling batches and single input.
         Args:
             mel (mx.array):
                 Mel-spectrogram input with shape [batch, sequence, mel_dim] for
@@ -110,9 +176,9 @@ class BaseParakeet(nn.Module):
         path: Path | str,
         *,
         dtype: mx.Dtype = mx.bfloat16,
-        chunk_duration: Optional[float] = None,
+        chunk_duration: float | None = None,
         overlap_duration: float = 15.0,
-        chunk_callback: Optional[Callable] = None,
+        chunk_callback: Callable | None = None,
     ) -> AlignedResult:
         """
         Transcribe an audio file, with optional chunking for long files.
@@ -151,7 +217,7 @@ class BaseParakeet(nn.Module):
         chunk_samples = int(chunk_duration * self.preprocessor_config.sample_rate)
         overlap_samples = int(overlap_duration * self.preprocessor_config.sample_rate)
 
-        all_tokens = []
+        all_tokens: list[AlignedToken] = []
 
         for start in range(0, len(audio_data), chunk_samples - overlap_samples):
             end = min(start + chunk_samples, len(audio_data))
@@ -160,7 +226,8 @@ class BaseParakeet(nn.Module):
                 chunk_callback(end, len(audio_data))
 
             if end - start < self.preprocessor_config.hop_length:
-                break  # prevent zero-length log mel
+                break  # skip chunks that are too short to produce valid mel-spectrogram features
+                # (prevent zero-length log mel)
 
             chunk_audio = audio_data[start:end]
             chunk_mel = get_logmel(chunk_audio, self.preprocessor_config)
@@ -220,7 +287,8 @@ class BaseParakeet(nn.Module):
                 of encoder layers won't have any impacts.
             keep_original_attention (bool, optional):
                 Whether to preserve the original attention class
-                during streaming inference. Defaults to False. (Will switch to local attention.)
+                during streaming inference. Defaults to False.
+                (Will switch to local attention.)
             decoding_config (DecodingConfig, optional):
                 Configuration object that controls decoding behavior
                 Defaults to DecodingConfig().
@@ -259,13 +327,24 @@ class ParakeetTDT(BaseParakeet):
     def decode(
         self,
         features: mx.array,
-        lengths: Optional[mx.array] = None,
-        last_token: Optional[list[Optional[int]]] = None,
-        hidden_state: Optional[list[Optional[tuple[mx.array, mx.array]]]] = None,
+        lengths: mx.array | None = None,
+        last_token: list[int | None] | None = None,
+        hidden_state: list[tuple[mx.array, mx.array] | None] | None = None,
         *,
         config: DecodingConfig = DecodingConfig(),
-    ) -> tuple[list[list[AlignedToken]], list[Optional[tuple[mx.array, mx.array]]]]:
-        """Run TDT decoder with features, optional length and decoder state. Outputs list[list[AlignedToken]] and updated hidden state"""
+    ) -> tuple[list[list[AlignedToken]], list[tuple[mx.array, mx.array] | None]]:
+        """Run TDT decoder with features, optional length and decoder state.
+
+        Args:
+            features: Encoded audio features from the encoder.
+            lengths: Optional sequence lengths for each batch item.
+            last_token: Optional last predicted token for each batch item.
+            hidden_state: Optional decoder hidden states for each batch item.
+            config: Decoding configuration.
+
+        Returns:
+            tuple: (list of token sequences, updated hidden states)
+        """
         assert (
             config.decoding == "greedy"
         ), "Only greedy decoding is supported for TDT decoder now"
@@ -344,10 +423,9 @@ class ParakeetTDT(BaseParakeet):
 
                 if self.durations[int(decision)] != 0:
                     new_symbols = 0
-                else:
-                    if self.max_symbols is not None and self.max_symbols <= new_symbols:
-                        step += 1
-                        new_symbols = 0
+                elif self.max_symbols is not None and self.max_symbols <= new_symbols:
+                    step += 1
+                    new_symbols = 0
 
             results.append(hypothesis)
 
@@ -389,13 +467,24 @@ class ParakeetRNNT(BaseParakeet):
     def decode(
         self,
         features: mx.array,
-        lengths: Optional[mx.array] = None,
-        last_token: Optional[list[Optional[int]]] = None,
-        hidden_state: Optional[list[Optional[tuple[mx.array, mx.array]]]] = None,
+        lengths: mx.array | None = None,
+        last_token: list[int | None] | None = None,
+        hidden_state: list[tuple[mx.array, mx.array] | None] | None = None,
         *,
         config: DecodingConfig = DecodingConfig(),
-    ) -> tuple[list[list[AlignedToken]], list[Optional[tuple[mx.array, mx.array]]]]:
-        """Run TDT decoder with features, optional length and decoder state. Outputs list[list[AlignedToken]] and updated hidden state"""
+    ) -> tuple[list[list[AlignedToken]], list[tuple[mx.array, mx.array] | None]]:
+        """Run RNNT decoder with features, optional length and decoder state.
+
+        Args:
+            features: Encoded audio features from the encoder.
+            lengths: Optional sequence lengths for each batch item.
+            last_token: Optional last predicted token for each batch item.
+            hidden_state: Optional decoder hidden states for each batch item.
+            config: Decoding configuration.
+
+        Returns:
+            tuple: (list of token sequences, updated hidden states)
+        """
         assert (
             config.decoding == "greedy"
         ), "Only greedy decoding is supported for RNNT decoder now"
@@ -509,7 +598,16 @@ class ParakeetCTC(BaseParakeet):
         *,
         config: DecodingConfig = DecodingConfig(),
     ) -> list[list[AlignedToken]]:
-        """Run CTC decoder with features and lengths. Outputs list[list[AlignedToken]]."""
+        """Run CTC decoder with features and lengths.
+
+        Args:
+            features: Encoded audio features from the encoder.
+            lengths: Sequence lengths for each batch item.
+            config: Decoding configuration.
+
+        Returns:
+            list[list[AlignedToken]]: List of decoded token sequences.
+        """
         B, S, *_ = features.shape
 
         logits = self.decoder(features)
@@ -522,7 +620,7 @@ class ParakeetCTC(BaseParakeet):
             best_tokens = mx.argmax(predictions, axis=1)
 
             hypothesis = []
-            token_boundaries = []
+            token_boundaries: list[tuple[int, int | None]] = []
             prev_token = -1
 
             for t, token_id in enumerate(best_tokens):
@@ -618,7 +716,8 @@ class ParakeetCTC(BaseParakeet):
 class ParakeetTDTCTC(ParakeetTDT):
     """MLX Implementation of Parakeet-TDT-CTC Model
 
-    Has ConvASRDecoder decoder in `.ctc_decoder` but `.generate` uses TDT decoder all the times (Please open an issue if you need CTC decoder use-case!)
+    Has ConvASRDecoder decoder in `.ctc_decoder` but `.generate` uses TDT decoder
+    all the times (Please open an issue if you need CTC decoder use-case!)
     """
 
     def __init__(self, args: ParakeetTDTCTCArgs):
@@ -629,13 +728,34 @@ class ParakeetTDTCTC(ParakeetTDT):
 
 # streaming
 class StreamingParakeet:
+    """Context manager for real-time streaming ASR inference.
+
+    This class enables real-time transcription by maintaining internal buffers
+    and caches to process audio chunks incrementally. It supports local attention
+    mechanisms for efficient streaming and maintains decoder state across chunks.
+
+    Attributes:
+        model: The base Parakeet model to use for inference.
+        cache: List of Conformer layer caches for efficient streaming.
+        audio_buffer: Buffer for raw audio samples.
+        mel_buffer: Buffer for mel-spectrogram features.
+        decoder_hidden: Hidden state from the decoder (for RNNT/TDT models).
+        last_token: Last predicted token (for RNNT/TDT models).
+        finalized_tokens: Tokens that have been finalized and won't change.
+        draft_tokens: Preliminary tokens that may change with more audio.
+        context_size: Left and right context sizes for local attention.
+        depth: Number of encoder layers to cache for exact equivalence.
+        decoding_config: Configuration for decoding behavior.
+        keep_original_attention: Whether to preserve original attention mechanism.
+    """
+
     model: "BaseParakeet"
-    cache: List[ConformerCache]
+    cache: list[ConformerCache]
 
     audio_buffer: mx.array
-    mel_buffer: Optional[mx.array]
-    decoder_hidden: Optional[tuple[mx.array, mx.array]] = None
-    last_token: Optional[int] = None
+    mel_buffer: mx.array | None
+    decoder_hidden: tuple[mx.array, mx.array] | None = None
+    last_token: int | None = None
 
     finalized_tokens: list[AlignedToken]
     draft_tokens: list[AlignedToken]
@@ -654,6 +774,15 @@ class StreamingParakeet:
         keep_original_attention: bool = False,
         decoding_config: DecodingConfig = DecodingConfig(),
     ) -> None:
+        """Initialize StreamingParakeet for real-time inference.
+
+        Args:
+            model: The Parakeet model to use for streaming inference.
+            context_size: Tuple of (left_context, right_context) sizes.
+            depth: Number of encoder layers to cache for exact equivalence.
+            keep_original_attention: Whether to preserve original attention.
+            decoding_config: Configuration for decoding behavior.
+        """
         self.context_size = context_size
         self.depth = depth
         self.decoding_config = decoding_config
@@ -671,6 +800,11 @@ class StreamingParakeet:
         self.draft_tokens = []
 
     def __enter__(self):
+        """Enter the streaming context and configure attention model.
+
+        Returns:
+            self: The StreamingParakeet instance.
+        """
         if not self.keep_original_attention:
             self.model.encoder.set_attention_model(
                 "rel_pos_local_attn", self.context_size
@@ -678,10 +812,17 @@ class StreamingParakeet:
         return self
 
     def __exit__(self, exc_type, exc_val, exc_tb):
+        """Exit the streaming context and clean up resources.
+
+        Args:
+            exc_type: Exception type if an exception occurred.
+            exc_val: Exception value if an exception occurred.
+            exc_tb: Exception traceback if an exception occurred.
+        """
         if not self.keep_original_attention:
             self.model.encoder.set_attention_model(
                 "rel_pos"
-            )  # hard-coded; might cache if there's actually new varient than rel_pos
+            )  # hard-coded; might cache if there's new variant than rel_pos
         del self.audio_buffer
         del self.cache
 
@@ -689,25 +830,47 @@ class StreamingParakeet:
 
     @property
     def keep_size(self):
-        """Indicates how many encoded feature frames to keep in KV cache"""
+        """Number of encoded feature frames to keep in KV cache.
+
+        Returns:
+            int: The left context size, indicating frames to retain.
+        """
         return self.context_size[0]
 
     @property
     def drop_size(self):
-        """Indicates how many encoded feature frames to drop"""
+        """Number of encoded feature frames to drop from cache.
+
+        Returns:
+            int: Right context size multiplied by depth.
+        """
         return self.context_size[1] * self.depth
 
     @property
     def result(self) -> AlignedResult:
-        """Transcription result"""
+        """Current transcription result including finalized and draft tokens.
+
+        Returns:
+            AlignedResult: Complete transcription with aligned tokens and sentences.
+        """
         return sentences_to_result(
             tokens_to_sentences(self.finalized_tokens + self.draft_tokens)
         )
 
     def add_audio(self, audio: mx.array) -> None:
-        """Takes portion of audio and transcribe it.
+        """Add audio chunk for streaming transcription.
 
-        `audio` must be 1D array"""
+        Processes the audio chunk incrementally, maintaining internal buffers
+        and updating transcription results. The method handles mel-spectrogram
+        conversion, encoder processing with cache management, and decoding.
+
+        Args:
+            audio: 1D audio array to be processed and transcribed.
+
+        Note:
+            The audio array must be 1-dimensional and match the model's
+            expected sample rate.
+        """
 
         self.audio_buffer = mx.concat(
             [
@@ -766,7 +929,7 @@ class StreamingParakeet:
         # second phase: draft region decode (will be dropped)
         finalized_length = max(0, length - self.drop_size)
 
-        if isinstance(self.model, ParakeetTDT) or isinstance(self.model, ParakeetRNNT):
+        if isinstance(self.model, ParakeetTDT | ParakeetRNNT):
             finalized_tokens, finalized_state = self.model.decode(
                 features,
                 mx.array([finalized_length]),
