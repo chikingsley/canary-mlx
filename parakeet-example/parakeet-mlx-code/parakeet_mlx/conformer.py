@@ -1,9 +1,9 @@
 import math
 from dataclasses import dataclass
-from typing import Literal
+from typing import Literal, Optional
 
 import mlx.core as mx
-from mlx import nn
+import mlx.nn as nn
 from mlx.nn.utils import tree_flatten
 
 from parakeet_mlx.attention import (
@@ -31,10 +31,10 @@ class ConformerArgs:
     causal_downsampling: bool = False
     use_bias: bool = True
     xscaling: bool = False
-    pos_bias_u: mx.array | None = None
-    pos_bias_v: mx.array | None = None
+    pos_bias_u: Optional[mx.array] = None
+    pos_bias_v: Optional[mx.array] = None
     subsampling_conv_chunking_factor: int = 1
-    att_context_size: list[int] | None = None
+    att_context_size: Optional[list[int]] = None
 
 
 class FeedForward(nn.Module):
@@ -152,7 +152,7 @@ class ConformerBlock(nn.Module):
     def set_attention_model(
         self,
         name: Literal["rel_pos", "rel_pos_local_attn", "normal"],
-        context_size: tuple[int, int] | None = (256, 256),
+        context_size: Optional[tuple[int, int]] = (256, 256),
     ):
         new_attn = (
             RelPositionMultiHeadAttention(
@@ -368,7 +368,7 @@ class Conformer(nn.Module):
     def set_attention_model(
         self,
         name: Literal["rel_pos", "rel_pos_local_attn", "normal"],
-        context_size: tuple[int, int] | None = (256, 256),
+        context_size: Optional[tuple[int, int]] = (256, 256),
     ):
         if name == "rel_pos":
             self.pos_enc = RelPositionalEncoding(
@@ -417,7 +417,7 @@ class Conformer(nn.Module):
                 offset=cache[0].offset if cache[0] is not None else 0,  # type: ignore
             )
 
-        for layer, c in zip(self.layers, cache, strict=False):
+        for layer, c in zip(self.layers, cache):
             x = layer(x, pos_emb=pos_emb, cache=c)
 
         return x, out_lengths

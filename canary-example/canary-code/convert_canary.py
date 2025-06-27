@@ -294,6 +294,14 @@ def convert_canary_to_mlx(
 
 
 def main() -> None:
+    """
+    Convert NVIDIA Canary ASR model to MLX format.
+
+    Args:
+        model_path: Path to extracted .nemo directory (containing model_weights.ckpt)
+        output_path: Output directory for MLX model
+        dtype: Data type for MLX model
+    """
     parser = argparse.ArgumentParser(
         description="Convert NVIDIA Canary ASR model to MLX format"
     )

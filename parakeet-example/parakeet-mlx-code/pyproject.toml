@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=42", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "parakeet-mlx"
+version = "0.3.1"
+description = "An implementation of the Nvidia's Parakeet models for Apple Silicon using MLX."
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "dacite>=1.9.2",
+    "huggingface-hub>=0.30.2",
+    "librosa>=0.11.0",
+    "mlx>=0.22.1",
+    "numpy>=2.2.5",
+    "typer>=0.15.3",
+]
+license = "Apache-2.0"
+keywords = [
+    "mlx",
+    "parakeet",
+    "asr",
+    "nvidia",
+    "apple",
+    "speech",
+    "recognition",
+    "ml",
+]
+
+[project.urls]
+Repository = "https://github.com/senstella/parakeet-mlx.git"
+Issues = "https://github.com/senstella/parakeet-mlx/issues"
+
+[project.scripts]
+parakeet-mlx = "parakeet_mlx.cli:app"

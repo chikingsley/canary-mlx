@@ -14,7 +14,9 @@
       "Bash(git cherry-pick:*)",
       "Bash(mkdir:*)",
       "Bash(mv:*)",
-      "mcp__zen__analyze"
+      "mcp__zen__analyze",
+      "Bash(uv sync:*)",
+      "Bash(uv pip install:*)"
     ],
     "deny": []
   }
