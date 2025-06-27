@@ -1,11 +1,20 @@
+"""Recurrent Neural Network Transducer (RNN-T) components for the Parakeet model."""
+
 from dataclasses import dataclass
 
 import mlx.core as mx
-import mlx.nn as nn
+from mlx import nn
 
 
 @dataclass
 class PredictNetworkArgs:
+    """
+    Args:
+        pred_hidden (int): _description_
+        pred_rnn_layers (int): _description_
+        rnn_hidden_size (int | None, optional): _description_. Defaults to None.
+    """
+
     pred_hidden: int
     pred_rnn_layers: int
     rnn_hidden_size: int | None = None
@@ -13,6 +22,14 @@ class PredictNetworkArgs:
 
 @dataclass
 class JointNetworkArgs:
+    """
+    Args:
+        joint_hidden (int): _description_
+        activation (str): _description_
+        encoder_hidden (int): _description_
+        pred_hidden (int): _description_
+    """
+
     joint_hidden: int
     activation: str
     encoder_hidden: int
@@ -21,6 +38,13 @@ class JointNetworkArgs:
 
 @dataclass
 class PredictArgs:
+    """
+    Args:
+        blank_as_pad (bool): _description_
+        vocab_size (int): _description_
+        prednet (PredictNetworkArgs): _description_
+    """
+
     blank_as_pad: bool
     vocab_size: int
     prednet: PredictNetworkArgs
@@ -28,6 +52,14 @@ class PredictArgs:
 
 @dataclass
 class JointArgs:
+    """
+    Args:
+        num_classes (int): _description_
+        vocabulary (list[str]): _description_
+        jointnet (JointNetworkArgs): _description_
+        num_extra_outputs (int, optional): _description_. Defaults to 0.
+    """
+
     num_classes: int
     vocabulary: list[str]
     jointnet: JointNetworkArgs
@@ -35,6 +67,15 @@ class JointArgs:
 
 
 class LSTM(nn.Module):
+    """
+    Args:
+        input_size (int): _description_
+        hidden_size (int): _description_
+        num_layers (int, optional): _description_. Defaults to 1.
+        bias (bool, optional): _description_. Defaults to True.
+        batch_first (bool, optional): _description_. Defaults to True.
+    """
+
     def __init__(
         self,
         input_size: int,
@@ -58,11 +99,15 @@ class LSTM(nn.Module):
         if self.batch_first:
             x = mx.transpose(x, (1, 0, 2))
 
+        h: list[mx.array | None]
+        c: list[mx.array | None]
         if h_c is None:
             h = [None] * self.num_layers
             c = [None] * self.num_layers
         else:
-            h, c = h_c
+            h_arr, c_arr = h_c
+            h = [h_arr[i] for i in range(h_arr.shape[0])]
+            c = [c_arr[i] for i in range(c_arr.shape[0])]
 
         outputs = x
         next_h = []
@@ -86,6 +131,11 @@ class LSTM(nn.Module):
 
 
 class PredictNetwork(nn.Module):
+    """
+    Args:
+        args (PredictArgs): _description_
+    """
+
     def __init__(self, args: PredictArgs):
         super().__init__()
 
@@ -98,9 +148,11 @@ class PredictNetwork(nn.Module):
             ),
             "dec_rnn": LSTM(
                 args.prednet.pred_hidden,
-                args.prednet.rnn_hidden_size
-                if args.prednet.rnn_hidden_size
-                else args.prednet.pred_hidden,
+                (
+                    args.prednet.rnn_hidden_size
+                    if args.prednet.rnn_hidden_size
+                    else args.prednet.pred_hidden
+                ),
                 args.prednet.pred_rnn_layers,
             ),
         }
@@ -117,6 +169,11 @@ class PredictNetwork(nn.Module):
 
 
 class JointNetwork(nn.Module):
+    """
+    Args:
+        args (JointArgs): _description_
+    """
+
     def __init__(self, args: JointArgs):
         super().__init__()
         self._num_classes = args.num_classes + 1 + args.num_extra_outputs
@@ -127,18 +184,20 @@ class JointNetwork(nn.Module):
                 "[relu, sigmoid, tanh]"
             )
 
-        activation = args.jointnet.activation.lower()
+        activation_str = args.jointnet.activation.lower()
 
-        if activation == "relu":
+        activation: nn.Module
+        if activation_str == "relu":
             activation = nn.ReLU()
-        elif activation == "sigmoid":
+        elif activation_str == "sigmoid":
             activation = nn.Sigmoid()
         else:
             activation = nn.Tanh()
 
         self.pred = nn.Linear(args.jointnet.pred_hidden, args.jointnet.joint_hidden)
         self.enc = nn.Linear(args.jointnet.encoder_hidden, args.jointnet.joint_hidden)
-        self.joint_net = [activation] + [
+        self.joint_net = [
+            activation,
             nn.Identity(),
             nn.Linear(args.jointnet.joint_hidden, self._num_classes),
         ]

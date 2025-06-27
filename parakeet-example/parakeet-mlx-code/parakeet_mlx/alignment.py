@@ -1,8 +1,12 @@
+"""Utilities for aligning and merging token sequences from audio transcription."""
+
 from dataclasses import dataclass
 
 
 @dataclass
 class AlignedToken:
+    """Represents a single token with timing information."""
+
     id: int
     text: str
     start: float
@@ -10,11 +14,14 @@ class AlignedToken:
     end: float = 0.0  # temporary
 
     def __post_init__(self) -> None:
+        """Calculate the end time after initialization."""
         self.end = self.start + self.duration
 
 
 @dataclass
 class AlignedSentence:
+    """Represents a sentence composed of aligned tokens."""
+
     text: str
     tokens: list[AlignedToken]
     start: float = 0.0  # temporary
@@ -22,7 +29,8 @@ class AlignedSentence:
     duration: float = 0.0  # temporary
 
     def __post_init__(self) -> None:
-        self.tokens = list(sorted(self.tokens, key=lambda x: x.start))
+        """Calculate sentence timings based on its tokens."""
+        self.tokens = sorted(self.tokens, key=lambda x: x.start)
         self.start = self.tokens[0].start
         self.end = self.tokens[-1].end
         self.duration = self.end - self.start
@@ -30,18 +38,34 @@ class AlignedSentence:
 
 @dataclass
 class AlignedResult:
+    """Represents the final alignment result, containing text and sentences."""
+
     text: str
     sentences: list[AlignedSentence]
 
     def __post_init__(self) -> None:
+        """Strip whitespace from the final text."""
         self.text = self.text.strip()
 
     @property
     def tokens(self) -> list[AlignedToken]:
+        """Return a flat list of all tokens from all sentences."""
         return [token for sentence in self.sentences for token in sentence.tokens]
 
 
 def tokens_to_sentences(tokens: list[AlignedToken]) -> list[AlignedSentence]:
+    """
+    Convert a list of tokens into a list of sentences.
+
+    Sentences are split based on punctuation marks. This is a basic
+    implementation and may not cover all edge cases perfectly.
+
+    Args:
+        tokens: A list of AlignedToken objects.
+
+    Returns:
+        A list of AlignedSentence objects.
+    """
     sentences = []
     current_tokens = []
 
@@ -53,13 +77,13 @@ def tokens_to_sentences(tokens: list[AlignedToken]) -> list[AlignedSentence]:
             "!" in token.text
             or "?" in token.text
             or "。" in token.text
-            or "？" in token.text
-            or "！" in token.text
+            or "？" in token.text  # noqa: RUF001
+            or "！" in token.text  # noqa: RUF001
             or (
                 "." in token.text
                 and (idx == len(tokens) - 1 or " " in tokens[idx + 1].text)
             )
-        ):  # type: ignore
+        ):
             sentence_text = "".join(t.text for t in current_tokens)
             sentence = AlignedSentence(text=sentence_text, tokens=current_tokens)
             sentences.append(sentence)
@@ -75,6 +99,15 @@ def tokens_to_sentences(tokens: list[AlignedToken]) -> list[AlignedSentence]:
 
 
 def sentences_to_result(sentences: list[AlignedSentence]) -> AlignedResult:
+    """
+    Convert a list of sentences into a single result object.
+
+    Args:
+        sentences: A list of AlignedSentence objects.
+
+    Returns:
+        An AlignedResult object.
+    """
     return AlignedResult("".join(sentence.text for sentence in sentences), sentences)
 
 
@@ -83,9 +116,28 @@ def merge_longest_contiguous(
     b: list[AlignedToken],
     *,
     overlap_duration: float,
-):
+) -> list[AlignedToken]:
+    """
+    Merge two overlapping token sequences based on the longest contiguous match.
+
+    This function identifies the longest stretch of identical token IDs where the
+    start times are within a specified `overlap_duration`. It then uses this
+    contiguous block to stitch the two sequences together.
+
+    Args:
+        a: The first list of tokens.
+        b: The second list of tokens.
+        overlap_duration: The maximum allowed time difference for tokens to be
+          considered overlapping.
+
+    Returns:
+        A merged list of tokens.
+
+    Raises:
+        RuntimeError: If a sufficiently long contiguous sequence cannot be found.
+    """
     if not a or not b:
-        return b if not a else a
+        return a if a else b
 
     a_end_time = a[-1].end
     b_start_time = b[0].start
@@ -96,33 +148,33 @@ def merge_longest_contiguous(
     overlap_a = [token for token in a if token.end > b_start_time - overlap_duration]
     overlap_b = [token for token in b if token.start < a_end_time + overlap_duration]
 
-    enough_pairs = len(overlap_a) // 2
-
     if len(overlap_a) < 2 or len(overlap_b) < 2:
         cutoff_time = (a_end_time + b_start_time) / 2
         return [t for t in a if t.end <= cutoff_time] + [
             t for t in b if t.start >= cutoff_time
         ]
 
-    best_contiguous = []
-    for i in range(len(overlap_a)):
-        for j in range(len(overlap_b)):
+    enough_pairs = len(overlap_a) // 2
+
+    best_contiguous: list[tuple[int, int]] = []
+    for i, token_a in enumerate(overlap_a):
+        for j, token_b in enumerate(overlap_b):
             if (
-                overlap_a[i].id == overlap_b[j].id
-                and abs(overlap_a[i].start - overlap_b[j].start) < overlap_duration / 2
+                token_a.id == token_b.id
+                and abs(token_a.start - token_b.start) < overlap_duration / 2
             ):
-                current = []
-                k, l = i, j
+                current: list[tuple[int, int]] = []
+                k, m = i, j
                 while (
                     k < len(overlap_a)
-                    and l < len(overlap_b)
-                    and overlap_a[k].id == overlap_b[l].id
-                    and abs(overlap_a[k].start - overlap_b[l].start)
+                    and m < len(overlap_b)
+                    and overlap_a[k].id == overlap_b[m].id
+                    and abs(overlap_a[k].start - overlap_b[m].start)
                     < overlap_duration / 2
                 ):
-                    current.append((k, l))
+                    current.append((k, m))
                     k += 1
-                    l += 1
+                    m += 1
 
                 if len(current) > len(best_contiguous):
                     best_contiguous = current
@@ -132,7 +184,7 @@ def merge_longest_contiguous(
         lcs_indices_a = [a_start_idx + pair[0] for pair in best_contiguous]
         lcs_indices_b = [pair[1] for pair in best_contiguous]
 
-        result = []
+        result: list[AlignedToken] = []
         result.extend(a[: lcs_indices_a[0]])
 
         for i in range(len(best_contiguous)):
@@ -164,9 +216,26 @@ def merge_longest_common_subsequence(
     b: list[AlignedToken],
     *,
     overlap_duration: float,
-):
+) -> list[AlignedToken]:
+    """
+    Merge two overlapping token sequences using the longest common subsequence.
+
+    This function finds the longest common subsequence of token IDs within the
+    overlapping region and uses it to merge the two sequences. This can be more
+    robust than `merge_longest_contiguous` if there are minor discrepancies in
+    the overlapping region.
+
+    Args:
+        a: The first list of tokens.
+        b: The second list of tokens.
+        overlap_duration: The maximum allowed time difference for tokens to be
+          considered overlapping.
+
+    Returns:
+        A merged list of tokens.
+    """
     if not a or not b:
-        return b if not a else a
+        return a if a else b
 
     a_end_time = a[-1].end
     b_start_time = b[0].start
@@ -185,18 +254,17 @@ def merge_longest_common_subsequence(
 
     dp = [[0 for _ in range(len(overlap_b) + 1)] for _ in range(len(overlap_a) + 1)]
 
-    for i in range(1, len(overlap_a) + 1):
-        for j in range(1, len(overlap_b) + 1):
+    for i, token_a in enumerate(overlap_a):
+        for j, token_b in enumerate(overlap_b):
             if (
-                overlap_a[i - 1].id == overlap_b[j - 1].id
-                and abs(overlap_a[i - 1].start - overlap_b[j - 1].start)
-                < overlap_duration / 2
+                token_a.id == token_b.id
+                and abs(token_a.start - token_b.start) < overlap_duration / 2
             ):
-                dp[i][j] = dp[i - 1][j - 1] + 1
+                dp[i + 1][j + 1] = dp[i][j] + 1
             else:
-                dp[i][j] = max(dp[i - 1][j], dp[i][j - 1])
+                dp[i + 1][j + 1] = max(dp[i][j + 1], dp[i + 1][j])
 
-    lcs_pairs = []
+    lcs_pairs: list[tuple[int, int]] = []
     i, j = len(overlap_a), len(overlap_b)
 
     while i > 0 and j > 0:
@@ -225,7 +293,7 @@ def merge_longest_common_subsequence(
     lcs_indices_a = [a_start_idx + pair[0] for pair in lcs_pairs]
     lcs_indices_b = [pair[1] for pair in lcs_pairs]
 
-    result = []
+    result: list[AlignedToken] = []
 
     result.extend(a[: lcs_indices_a[0]])
 

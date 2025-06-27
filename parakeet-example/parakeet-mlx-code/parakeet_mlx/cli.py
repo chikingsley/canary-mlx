@@ -1,11 +1,13 @@
+"""Command-line interface for transcribing audio files using Parakeet MLX models."""
+
 import datetime
 import json
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Annotated, Any
 
 import typer
 from mlx.core import bfloat16, float32
-from rich import print
+from rich import print as rprint
 from rich.progress import (
     BarColumn,
     Progress,
@@ -13,7 +15,6 @@ from rich.progress import (
     TextColumn,
     TimeElapsedColumn,
 )
-from typing_extensions import Annotated
 
 from parakeet_mlx import AlignedResult, AlignedSentence, AlignedToken, from_pretrained
 
@@ -24,6 +25,17 @@ app = typer.Typer(no_args_is_help=True)
 def format_timestamp(
     seconds: float, always_include_hours: bool = True, decimal_marker: str = ","
 ) -> str:
+    """
+    Format a timestamp in seconds into a standard SRT/VTT format.
+
+    Args:
+        seconds: The timestamp in seconds.
+        always_include_hours: If True, the hours part is always included.
+        decimal_marker: The character to use for the decimal point.
+
+    Returns:
+        The formatted timestamp string.
+    """
     assert seconds >= 0
     milliseconds = round(seconds * 1000.0)
 
@@ -58,9 +70,11 @@ def to_srt(result: AlignedResult, highlight_words: bool = False) -> str:
             for i, token in enumerate(sentence.tokens):
                 start_time = format_timestamp(token.start, decimal_marker=",")
                 end_time = format_timestamp(
-                    token.end
-                    if token == sentence.tokens[-1]
-                    else sentence.tokens[i + 1].start,
+                    (
+                        token.end
+                        if token == sentence.tokens[-1]
+                        else sentence.tokens[i + 1].start
+                    ),
                     decimal_marker=",",
                 )
 
@@ -105,9 +119,11 @@ def to_vtt(result: AlignedResult, highlight_words: bool = False) -> str:
             for i, token in enumerate(sentence.tokens):
                 start_time = format_timestamp(token.start, decimal_marker=".")
                 end_time = format_timestamp(
-                    token.end
-                    if token == sentence.tokens[-1]
-                    else sentence.tokens[i + 1].start,
+                    (
+                        token.end
+                        if token == sentence.tokens[-1]
+                        else sentence.tokens[i + 1].start
+                    ),
                     decimal_marker=".",
                 )
 
@@ -138,7 +154,8 @@ def to_vtt(result: AlignedResult, highlight_words: bool = False) -> str:
     return "\n".join(vtt_content)
 
 
-def _aligned_token_to_dict(token: AlignedToken) -> Dict[str, Any]:
+def _aligned_token_to_dict(token: AlignedToken) -> dict[str, Any]:
+    """Convert an AlignedToken to a dictionary."""
     return {
         "text": token.text,
         "start": round(token.start, 3),
@@ -147,7 +164,8 @@ def _aligned_token_to_dict(token: AlignedToken) -> Dict[str, Any]:
     }
 
 
-def _aligned_sentence_to_dict(sentence: AlignedSentence) -> Dict[str, Any]:
+def _aligned_sentence_to_dict(sentence: AlignedSentence) -> dict[str, Any]:
+    """Convert an AlignedSentence to a dictionary."""
     return {
         "text": sentence.text,
         "start": round(sentence.start, 3),
@@ -158,6 +176,7 @@ def _aligned_sentence_to_dict(sentence: AlignedSentence) -> Dict[str, Any]:
 
 
 def to_json(result: AlignedResult) -> str:
+    """Format transcription result as a JSON object."""
     output_dict = {
         "text": result.text,
         "sentences": [
@@ -170,7 +189,7 @@ def to_json(result: AlignedResult) -> str:
 @app.command("transcribe")
 def transcribe(
     audios: Annotated[
-        List[Path],
+        list[Path],
         typer.Argument(
             help="Files to transcribe",
             exists=True,
@@ -184,14 +203,14 @@ def transcribe(
     ] = "mlx-community/parakeet-tdt-0.6b-v2",
     output_dir: Annotated[
         Path, typer.Option(help="Directory to save transcriptions")
-    ] = Path("."),
+    ] = Path(),
     output_format: Annotated[
         str, typer.Option(help="Format for output files (txt, srt, vtt, json, all)")
     ] = "srt",
     output_template: Annotated[
         str,
         typer.Option(
-            help="Template for output filenames, e.g. '{filename}_{date}_{index}'"
+            help="Template for output filenames, e.g. '{filename}_{date}_{time}_{index}'"
         ),
     ] = "{filename}",
     highlight_words: Annotated[
@@ -203,7 +222,8 @@ def transcribe(
         typer.Option(
             help="Chunking duration in seconds for long audio, 0 to disable chunking."
         ),
-    ] = 60 * 2,
+    ] = 60
+    * 2,
     overlap_duration: Annotated[
         float, typer.Option(help="Overlap duration in seconds if using chunking")
     ] = 15,
@@ -214,32 +234,34 @@ def transcribe(
     fp32: Annotated[
         bool, typer.Option("--fp32/--bf16", help="Use FP32 precision")
     ] = False,
-):
+) -> None:
     """
     Transcribe audio files using Parakeet MLX models.
     """
     if verbose:
-        print(f"Loading model: [bold cyan]{model}[/bold cyan]...")
+        rprint(f"Loading model: [bold cyan]{model}[/bold cyan]...")
 
     try:
         loaded_model = from_pretrained(model, dtype=bfloat16 if not fp32 else float32)
         if verbose:
-            print("[green]Model loaded successfully.[/green]")
-    except Exception as e:
-        print(f"[bold red]Error loading model {model}:[/bold red] {e}")
-        raise typer.Exit(code=1)
+            rprint("[green]Model loaded successfully.[/green]")
+    except OSError as e:
+        rprint(f"[bold red]Error loading model {model}:[/bold red] {e}")
+        raise typer.Exit(code=1) from None
 
     try:
         output_dir.mkdir(parents=True, exist_ok=True)
-    except Exception as e:
-        print(f"[bold red]Error creating output directory {output_dir}:[/bold red] {e}")
-        raise typer.Exit(code=1)
+    except OSError as e:
+        rprint(
+            f"[bold red]Error creating output directory {output_dir}:[/bold red] {e}"
+        )
+        raise typer.Exit(code=1) from None
 
     if verbose:
-        print(f"Output directory: [bold cyan]{output_dir.resolve()}[/bold cyan]")
-        print(f"Output format(s): [bold cyan]{output_format}[/bold cyan]")
+        rprint(f"Output directory: [bold cyan]{output_dir.resolve()}[/bold cyan]")
+        rprint(f"Output format(s): [bold cyan]{output_format}[/bold cyan]")
         if output_format in ["srt", "vtt", "all"] and highlight_words:
-            print("Highlight words: [bold cyan]Enabled[/bold cyan]")
+            rprint("Highlight words: [bold cyan]Enabled[/bold cyan]")
 
     formatters = {
         "txt": to_txt,
@@ -254,14 +276,17 @@ def transcribe(
     elif output_format in formatters:
         formats_to_generate = [output_format]
     else:
-        print(
-            f"[bold red]Error: Invalid output format '{output_format}'. Choose from {list(formatters.keys()) + ['all']}.[/bold red]"
+        valid_formats = [*list(formatters.keys()), "all"]
+        error_message = (
+            f"[bold red]Error: Invalid output format '{output_format}'. "
+            f"Choose from {valid_formats}.[/bold red]"
         )
+        rprint(error_message)
         raise typer.Exit(code=1)
 
     total_files = len(audios)
     if verbose:
-        print(f"Transcribing {total_files} file(s)...")
+        rprint(f"Transcribing {total_files} file(s)...")
 
     with Progress(
         SpinnerColumn(),
@@ -275,7 +300,7 @@ def transcribe(
 
         for i, audio_path in enumerate(audios):
             if verbose:
-                print(
+                rprint(
                     f"\nProcessing file {i + 1}/{total_files}: [bold cyan]{audio_path.name}[/bold cyan]"
                 )
             else:
@@ -289,7 +314,7 @@ def transcribe(
                     dtype=bfloat16 if not fp32 else float32,
                     chunk_duration=chunk_duration if chunk_duration != 0 else None,
                     overlap_duration=overlap_duration,
-                    chunk_callback=lambda current, full: progress.update(
+                    chunk_callback=lambda current, full, i=i: progress.update(
                         task, total=total_files * full, completed=full * i + current
                     ),
                 )
@@ -298,12 +323,14 @@ def transcribe(
                     for sentence in result.sentences:
                         start, end, text = sentence.start, sentence.end, sentence.text
                         line = f"[blue][{format_timestamp(start)} --> {format_timestamp(end)}][/blue] {text.strip()}"
-                        print(line)
+                        rprint(line)
 
                 base_filename = audio_path.stem
+                now = datetime.datetime.now()
                 template_vars = {
                     "filename": base_filename,
-                    "date": datetime.datetime.now().strftime("%Y%m%d"),
+                    "date": now.strftime("%Y%m%d"),
+                    "time": now.strftime("%H%M%S"),
                     "index": str(i + 1),
                 }
 
@@ -316,23 +343,25 @@ def transcribe(
                     output_filepath = output_dir / output_filename
 
                     try:
-                        with open(output_filepath, "w", encoding="utf-8") as f:
+                        with Path(output_filepath).open("w", encoding="utf-8") as f:
                             f.write(output_content)
                         if verbose:
-                            print(
+                            rprint(
                                 f"[green]Saved {fmt.upper()}:[/green] {output_filepath.absolute()}"
                             )
-                    except Exception as e:
-                        print(
+                    except OSError as e:
+                        rprint(
                             f"[bold red]Error writing output file {output_filepath}:[/bold red] {e}"
                         )
 
-            except Exception as e:
-                print(f"[bold red]Error transcribing file {audio_path}:[/bold red] {e}")
+            except OSError as e:
+                rprint(
+                    f"[bold red]Error transcribing file {audio_path}:[/bold red] {e}"
+                )
 
             progress.update(task, total=total_files, completed=i + 1)
 
-    print(
+    rprint(
         f"\n[bold green]Transcription complete.[/bold green] Outputs saved in '{output_dir.resolve()}'."
     )
 

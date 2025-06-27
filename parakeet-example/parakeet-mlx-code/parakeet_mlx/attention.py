@@ -1,10 +1,28 @@
+"""
+Implements various attention mechanisms for the Parakeet model, including standard
+multi-head attention, relative position attention, and a highly optimized local
+attention variant using custom Metal kernels.
+"""
+
 import math
 
 import mlx.core as mx
-import mlx.nn as nn
+from mlx import nn
 
 
 class MultiHeadAttention(nn.Module):
+    """Implements a standard multi-head attention layer.
+
+    This layer follows the original Transformer architecture, splitting the input
+    into multiple heads, applying scaled dot-product attention independently on
+    each head, and then concatenating the results.
+
+    Args:
+        n_head (int): The number of attention heads.
+        n_feat (int): The number of features in the input and output.
+        bias (bool): Whether to use a bias in the linear layers. Defaults to True.
+    """
+
     def __init__(
         self,
         n_head: int,
@@ -27,10 +45,23 @@ class MultiHeadAttention(nn.Module):
         q: mx.array,
         k: mx.array,
         v: mx.array,
-        pos_emb: mx.array | None = None,
+        _pos_emb: mx.array | None = None,
         mask: mx.array | None = None,
         cache=None,
     ) -> mx.array:
+        """Performs the forward pass of the multi-head attention.
+
+        Args:
+            q (mx.array): The query tensor.
+            k (mx.array): The key tensor.
+            v (mx.array): The value tensor.
+            _pos_emb (mx.array | None): Positional embedding, not used in this standard implementation.
+            mask (mx.array | None): An optional mask to apply to the attention scores.
+            cache: An optional cache for incremental decoding.
+
+        Returns:
+            mx.array: The output tensor after attention and linear projection.
+        """
         q, k, v = self.linear_q(q), self.linear_k(k), self.linear_v(v)
 
         batch, q_seq, _ = q.shape
@@ -50,6 +81,20 @@ class MultiHeadAttention(nn.Module):
 
 
 class RelPositionMultiHeadAttention(MultiHeadAttention):
+    """Implements multi-head attention with relative positional encoding.
+
+    This variant of MHA incorporates relative position information into the
+    attention score calculation, which can be more effective than absolute
+    positional encodings for some tasks.
+
+    Args:
+        n_head (int): The number of attention heads.
+        n_feat (int): The number of features in the input and output.
+        bias (bool): Whether to use a bias in the linear layers. Defaults to True.
+        pos_bias_u (mx.array | None): Initial value for the 'u' positional bias.
+        pos_bias_v (mx.array | None): Initial value for the 'v' positional bias.
+    """
+
     def __init__(
         self,
         n_head: int,
@@ -80,6 +125,17 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
         self.pos_bias_v = self._pos_bias_v_init
 
     def rel_shift(self, x: mx.array) -> mx.array:
+        """Performs a relative shift on the attention matrix.
+
+        This is a key component of the relative attention mechanism, used to
+        align the positional embeddings correctly with the queries and keys.
+
+        Args:
+            x (mx.array): The input tensor to be shifted.
+
+        Returns:
+            mx.array: The shifted tensor.
+        """
         B, H, Tq, pos_len = x.shape
         padding = [(0, 0)] * (x.ndim - 1) + [(1, 0)]
 
@@ -99,6 +155,22 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
         mask: mx.array | None = None,
         cache=None,
     ) -> mx.array:
+        """Performs the forward pass with relative positional attention.
+
+        Args:
+            q (mx.array): The query tensor.
+            k (mx.array): The key tensor.
+            v (mx.array): The value tensor.
+            pos_emb (mx.array | None): The relative positional embedding tensor.
+            mask (mx.array | None): An optional mask for the attention scores.
+            cache: An optional cache for incremental decoding.
+
+        Returns:
+            mx.array: The output of the attention layer.
+
+        Raises:
+            ValueError: If `pos_emb` is not provided.
+        """
         if pos_emb is None:
             raise ValueError("pos_emb is necessary!")
 
@@ -138,6 +210,22 @@ class RelPositionMultiHeadAttention(MultiHeadAttention):
 
 
 class RelPositionMultiHeadLocalAttention(RelPositionMultiHeadAttention):
+    """Implements MHA with local attention and relative positional encoding.
+
+    This is an optimized version of attention that restricts the context to a
+    local window around each query position. It uses custom Metal kernels for
+    performance-critical matrix multiplications.
+
+    Args:
+        n_head (int): The number of attention heads.
+        n_feat (int): The number of features in the input and output.
+        bias (bool): Whether to use a bias in the linear layers.
+        pos_bias_u (mx.array | None): Initial value for the 'u' positional bias.
+        pos_bias_v (mx.array | None): Initial value for the 'v' positional bias.
+        context_size (tuple[int, int]): The size of the left and right context
+            window. Defaults to (256, 256).
+    """
+
     def __init__(
         self,
         n_head: int,
@@ -165,6 +253,22 @@ class RelPositionMultiHeadLocalAttention(RelPositionMultiHeadAttention):
         mask: mx.array | None = None,
         cache=None,
     ) -> mx.array:
+        """Forward pass for local relative attention.
+
+        Args:
+            q (mx.array): The query tensor.
+            k (mx.array): The key tensor.
+            v (mx.array): The value tensor.
+            pos_emb (mx.array | None): Relative positional embedding tensor.
+            mask (mx.array | None): Optional boolean mask.
+            cache: Optional cache for incremental decoding.
+
+        Returns:
+            mx.array: The output of the attention layer.
+
+        Raises:
+            ValueError: If `pos_emb` is not provided.
+        """
         if pos_emb is None:
             raise ValueError("pos_emb is necessary!")
 
@@ -229,6 +333,20 @@ class RelPositionMultiHeadLocalAttention(RelPositionMultiHeadAttention):
         return self.linear_out(out)
 
     def matmul_qk(self, q: mx.array, k: mx.array, w: int) -> mx.array:
+        """Custom QK^T matmul for local attention using a Metal kernel.
+
+        This function computes the dot product between queries (q) and keys (k)
+        within a local window of size `2 * w + 1`. It is highly optimized for
+        Apple Silicon GPUs.
+
+        Args:
+            q (mx.array): The query tensor.
+            k (mx.array): The key tensor.
+            w (int): The half-width of the attention window.
+
+        Returns:
+            mx.array: The resulting attention scores.
+        """
         KERNEL = """
         // D, W are provided as constant
         uint B = q_shape[0];
@@ -391,6 +509,20 @@ class RelPositionMultiHeadLocalAttention(RelPositionMultiHeadAttention):
         return outputs[0]
 
     def matmul_pv(self, prob: mx.array, v: mx.array, w: int) -> mx.array:
+        """Custom PV matmul for local attention using a Metal kernel.
+
+        This function multiplies the attention probabilities (prob) with the
+        value vectors (v) within the local window. It is highly optimized for
+        Apple Silicon GPUs.
+
+        Args:
+            prob (mx.array): The attention probability tensor.
+            v (mx.array): The value tensor.
+            w (int): The half-width of the attention window.
+
+        Returns:
+            mx.array: The resulting context vectors.
+        """
         KERNEL = """
         // D, W, D_v are provided as constant
         uint B = prob_shape[0];
@@ -533,6 +665,17 @@ class RelPositionMultiHeadLocalAttention(RelPositionMultiHeadAttention):
 
 
 class RelPositionalEncoding(nn.Module):
+    """Generates and applies relative positional encodings.
+
+    This module creates sinusoidal positional encodings that are relative to the
+    current position, which are then added to the input embeddings.
+
+    Args:
+        d_model (int): The dimensionality of the model embeddings.
+        max_len (int): The maximum sequence length to pre-compute embeddings for.
+        scale_input (bool): Whether to scale the input by sqrt(d_model).
+    """
+
     def __init__(
         self,
         d_model: int,
@@ -548,6 +691,7 @@ class RelPositionalEncoding(nn.Module):
         self.calculate_pe()
 
     def calculate_pe(self):
+        """Pre-computes the sinusoidal positional encoding matrix."""
         positions = mx.arange(self.max_len - 1, -self.max_len, -1, dtype=mx.int32)
         positions = mx.expand_dims(positions, axis=1).astype(mx.float32)
 
@@ -565,6 +709,20 @@ class RelPositionalEncoding(nn.Module):
         mx.eval(self._pe)
 
     def __call__(self, x: mx.array, offset: int = 0) -> tuple[mx.array, mx.array]:
+        """Applies the positional encoding to the input tensor.
+
+        If the input sequence is longer than the pre-computed `max_len`, the
+        encoding matrix is dynamically recalculated.
+
+        Args:
+            x (mx.array): The input tensor.
+            offset (int): An optional offset for the sequence position, used in
+                incremental decoding. Defaults to 0.
+
+        Returns:
+            A tuple containing the scaled input tensor and the corresponding
+            positional embedding slice.
+        """
         input_len = x.shape[1] + offset
 
         if input_len > self.max_len:
@@ -583,6 +741,19 @@ class RelPositionalEncoding(nn.Module):
 
 
 class LocalRelPositionalEncoding(RelPositionalEncoding):
+    """Generates relative positional encodings for a local attention context.
+
+    This is a variant of `RelPositionalEncoding` tailored for local attention,
+    where only a fixed-size context window needs to be encoded.
+
+    Args:
+        d_model (int): The dimensionality of the model embeddings.
+        max_len (int): Not used in this implementation, kept for compatibility.
+        scale_input (bool): Whether to scale the input by sqrt(d_model).
+        context_size (tuple[int, int]): The size of the left and right context
+            window. Defaults to (256, 256).
+    """
+
     def __init__(
         self,
         d_model: int,
@@ -595,6 +766,7 @@ class LocalRelPositionalEncoding(RelPositionalEncoding):
         super().__init__(d_model, max_len, scale_input)
 
     def calculate_pe(self):
+        """Pre-computes the sinusoidal positional encoding matrix for the local context."""
         positions = mx.arange(
             self.left_context, -self.right_context - 1, -1, dtype=mx.int32
         )
@@ -615,7 +787,17 @@ class LocalRelPositionalEncoding(RelPositionalEncoding):
 
         mx.eval(self._pe)
 
-    def __call__(self, x: mx.array, offset: int = 0) -> tuple[mx.array, mx.array]:
+    def __call__(self, x: mx.array, _offset: int = 0) -> tuple[mx.array, mx.array]:
+        """Applies the local positional encoding to the input tensor.
+
+        Args:
+            x (mx.array): The input tensor.
+            _offset (int): Not used in this implementation. Defaults to 0.
+
+        Returns:
+            A tuple containing the scaled input tensor and the corresponding
+            local positional embedding.
+        """
         x = x * self.scale
 
         end_idx = self.left_context + self.right_context + 1

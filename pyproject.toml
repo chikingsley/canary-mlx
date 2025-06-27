@@ -42,7 +42,7 @@ dependencies = [
     "PyYAML>=6.0.2",
     "huggingface-hub >= 0.33.1",
     "mlx>=0.26.1",
-    "numpy<2.3.0",
+    "numpy>=2.2.5",
     "dacite>=1.9.2",
     "librosa>=0.11.0",
     "numba>=0.61.2",
@@ -64,6 +64,7 @@ dev = [
 
 [project.scripts]
 canary-to-mlx = "canary_to_mlx_converter:app"
+parakeet-mlx = "parakeet_mlx.cli:app"
 
 [tool.hatch.build.targets.wheel]
 packages = ["."]
@@ -112,6 +113,7 @@ disallow_untyped_defs = true
 disallow_incomplete_defs = true
 check_untyped_defs = true
 disallow_untyped_decorators = true
+ignore_missing_imports = true
 no_implicit_optional = true
 warn_redundant_casts = true
 warn_unused_ignores = true

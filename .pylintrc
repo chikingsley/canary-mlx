@@ -3,3 +3,16 @@ ignore-paths=tests
 max-line-length=119
 ignore-patterns=.*\.ipynb$
 recursive=y
+
+[MESSAGES CONTROL]
+disable=unused-variable,invalid-name,fixme
+
+[TYPECHECK]
+
+# List of members which are set dynamically and missed by pylint inference
+# system, and so shouldn't trigger E1101 when accessed. Python regular
+# expressions are accepted.
+generated-members=mx.bool_
+
+
+[VARIABLES]

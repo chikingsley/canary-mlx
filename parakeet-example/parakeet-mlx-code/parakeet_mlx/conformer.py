@@ -1,9 +1,18 @@
+"""
+This file defines the Conformer model architecture, a sequence-to-sequence model
+that uses a combination of self-attention and convolution layers. It is commonly
+used in automatic speech recognition.
+
+The implementation includes the main Conformer block, feed-forward networks,
+convolution modules, and subsampling layers.
+"""
+
 import math
 from dataclasses import dataclass
-from typing import Literal, Optional
+from typing import Literal
 
 import mlx.core as mx
-import mlx.nn as nn
+from mlx import nn
 from mlx.nn.utils import tree_flatten
 
 from parakeet_mlx.attention import (
@@ -17,6 +26,8 @@ from parakeet_mlx.attention import (
 
 @dataclass
 class ConformerArgs:
+    """Configuration arguments for the Conformer model."""
+
     feat_in: int  # mel-log
     n_layers: int
     d_model: int
@@ -31,24 +42,41 @@ class ConformerArgs:
     causal_downsampling: bool = False
     use_bias: bool = True
     xscaling: bool = False
-    pos_bias_u: Optional[mx.array] = None
-    pos_bias_v: Optional[mx.array] = None
+    pos_bias_u: mx.array | None = None
+    pos_bias_v: mx.array | None = None
     subsampling_conv_chunking_factor: int = 1
-    att_context_size: Optional[list[int]] = None
+    att_context_size: list[int] | None = None
 
 
 class FeedForward(nn.Module):
+    """A standard two-layer feed-forward network with SiLU activation.
+
+    Args:
+        d_model (int): The input and output dimension.
+        d_ff (int): The hidden dimension of the feed-forward network.
+        use_bias (bool): Whether to include a bias term in the linear layers.
+    """
+
     def __init__(self, d_model: int, d_ff: int, use_bias: bool = True):
         super().__init__()
         self.linear1 = nn.Linear(d_model, d_ff, bias=use_bias)
-        self.activation = nn.SiLU()
         self.linear2 = nn.Linear(d_ff, d_model, bias=use_bias)
 
     def __call__(self, x: mx.array) -> mx.array:
-        return self.linear2(self.activation(self.linear1(x)))
+        """Applies the feed-forward network to the input tensor."""
+        return self.linear2(nn.silu(self.linear1(x)))
 
 
 class Convolution(nn.Module):
+    """A conformer convolution module.
+
+    This module consists of a pointwise convolution, a depthwise convolution,
+    batch normalization, SiLU activation, and another pointwise convolution.
+
+    Args:
+        args (ConformerArgs): The conformer model configuration.
+    """
+
     def __init__(self, args: ConformerArgs):
         assert (args.conv_kernel_size - 1) % 2 == 0
         super().__init__()
@@ -73,7 +101,6 @@ class Convolution(nn.Module):
             bias=args.use_bias,
         )
         self.batch_norm = nn.BatchNorm(args.d_model)
-        self.activation = nn.SiLU()
         self.pointwise_conv2 = nn.Conv1d(
             args.d_model,
             args.d_model,
@@ -84,12 +111,23 @@ class Convolution(nn.Module):
         )
 
     def __call__(self, x: mx.array, cache=None) -> mx.array:
-        # x = x.swapaxes(1, 2)
+        """Applies the convolution module to the input tensor.
+        x = x.swapaxes(1, 2) - removed
+
+        Args:
+            x (mx.array): The input tensor.
+            cache: An optional cache for incremental decoding.
+
+        Returns:
+            mx.array: The output of the convolution module.
+        """
 
         x = self.pointwise_conv1(x)
-        x = nn.glu(x, axis=2)  # might make it variable later
+        x = nn.glu(
+            x, axis=2
+        )  # TODO: Investigate using other activation functions for the GLU gate.
 
-        # caching for conv!
+        # Applied cache for streaming convolution, which is crucial for real-time processing.
         if cache is not None:
             x = cache.update_and_fetch_conv(x, padding=self.padding)
         else:
@@ -97,13 +135,22 @@ class Convolution(nn.Module):
         x = self.depthwise_conv(x)
 
         x = self.batch_norm(x)
-        x = self.activation(x)
+        x = nn.silu(x)
         x = self.pointwise_conv2(x)
 
         return x
 
 
 class ConformerBlock(nn.Module):
+    """A single block of the Conformer model.
+
+    Each block consists of two feed-forward modules, a self-attention module,
+    and a convolution module, with layer normalization and residual connections.
+
+    Args:
+        args (ConformerArgs): The conformer model configuration.
+    """
+
     def __init__(self, args: ConformerArgs):
         super().__init__()
         ff_hidden_dim = args.d_model * args.ff_expansion_factor
@@ -123,21 +170,25 @@ class ConformerBlock(nn.Module):
                 pos_bias_v=args.pos_bias_v,
             )
             if args.self_attention_model == "rel_pos"
-            else RelPositionMultiHeadLocalAttention(
-                args.n_heads,
-                args.d_model,
-                bias=args.use_bias,
-                pos_bias_u=args.pos_bias_u,
-                pos_bias_v=args.pos_bias_v,
-                context_size=(args.att_context_size[0], args.att_context_size[1])
-                if args.att_context_size is not None
-                else (-1, -1),
-            )
-            if args.self_attention_model == "rel_pos_local_attn"
-            else MultiHeadAttention(
-                args.n_heads,
-                args.d_model,
-                bias=True,
+            else (
+                RelPositionMultiHeadLocalAttention(
+                    args.n_heads,
+                    args.d_model,
+                    bias=args.use_bias,
+                    pos_bias_u=args.pos_bias_u,
+                    pos_bias_v=args.pos_bias_v,
+                    context_size=(
+                        (args.att_context_size[0], args.att_context_size[1])
+                        if args.att_context_size is not None
+                        else (-1, -1)
+                    ),
+                )
+                if args.self_attention_model == "rel_pos_local_attn"
+                else MultiHeadAttention(
+                    args.n_heads,
+                    args.d_model,
+                    bias=True,
+                )
             )
         )
 
@@ -152,8 +203,17 @@ class ConformerBlock(nn.Module):
     def set_attention_model(
         self,
         name: Literal["rel_pos", "rel_pos_local_attn", "normal"],
-        context_size: Optional[tuple[int, int]] = (256, 256),
+        context_size: tuple[int, int] | None = (256, 256),
     ):
+        """Dynamically sets the attention mechanism for the block.
+
+        This allows switching between different attention types (e.g., global,
+        local) at runtime, transferring the weights from the old model.
+
+        Args:
+            name: The type of attention model to use.
+            context_size: The context window size for local attention.
+        """
         new_attn = (
             RelPositionMultiHeadAttention(
                 self.args.n_heads,
@@ -163,19 +223,21 @@ class ConformerBlock(nn.Module):
                 pos_bias_v=self.args.pos_bias_v,
             )
             if name == "rel_pos"
-            else RelPositionMultiHeadLocalAttention(
-                self.args.n_heads,
-                self.args.d_model,
-                bias=self.args.use_bias,
-                pos_bias_u=self.args.pos_bias_u,
-                pos_bias_v=self.args.pos_bias_v,
-                context_size=context_size if context_size is not None else (-1, -1),
-            )
-            if name == "rel_pos_local_attn"
-            else MultiHeadAttention(
-                self.args.n_heads,
-                self.args.d_model,
-                bias=True,
+            else (
+                RelPositionMultiHeadLocalAttention(
+                    self.args.n_heads,
+                    self.args.d_model,
+                    bias=self.args.use_bias,
+                    pos_bias_u=self.args.pos_bias_u,
+                    pos_bias_v=self.args.pos_bias_v,
+                    context_size=context_size if context_size is not None else (-1, -1),
+                )
+                if name == "rel_pos_local_attn"
+                else MultiHeadAttention(
+                    self.args.n_heads,
+                    self.args.d_model,
+                    bias=True,
+                )
             )
         )
 
@@ -190,6 +252,17 @@ class ConformerBlock(nn.Module):
         mask: mx.array | None = None,
         cache=None,
     ) -> mx.array:
+        """Forward pass for the Conformer block.
+
+        Args:
+            x (mx.array): The input tensor.
+            pos_emb (mx.array | None): The positional embedding tensor.
+            mask (mx.array | None): An optional mask for the attention scores.
+            cache: An optional cache for incremental decoding.
+
+        Returns:
+            mx.array: The output of the conformer block.
+        """
         x += 0.5 * self.feed_forward1(self.norm_feed_forward1(x))
 
         x_norm = self.norm_self_att(x)
@@ -204,6 +277,15 @@ class ConformerBlock(nn.Module):
 
 
 class DwStridingSubsampling(nn.Module):
+    """A depthwise striding convolutional subsampling layer.
+
+    This layer reduces the sequence length of the input by a given factor
+    using a series of 2D convolutions.
+
+    Args:
+        args (ConformerArgs): The conformer model configuration.
+    """
+
     def __init__(self, args: ConformerArgs):
         super().__init__()
 
@@ -269,32 +351,55 @@ class DwStridingSubsampling(nn.Module):
         self.out = nn.Linear(self._conv_channels * final_freq_dim, args.d_model)
 
     def conv_forward(self, x: mx.array) -> mx.array:
+        """Applies the stack of convolutional layers."""
         x = x.transpose((0, 2, 3, 1))
         for layer in self.conv:
             x = layer(x)
         return x.transpose((0, 3, 1, 2))
 
     def conv_split_by_batch(self, x: mx.array) -> tuple[mx.array, bool]:
+        """Splits the batch for convolution to manage memory usage.
+
+        Args:
+            x (mx.array): The input tensor.
+
+        Returns:
+            A tuple containing the processed tensor and a boolean indicating
+            if the split was successful.
+        """
         b = x.shape[0]
         if b == 1:
             return x, False
 
+        cf: int
         if self.subsampling_conv_chunking_factor > 1:
             cf = self.subsampling_conv_chunking_factor
         else:
             x_ceil = 2**31 / self._conv_channels * self._stride * self._stride
             p = math.ceil(math.log(x.size / x_ceil, 2))
-            cf: int = 2**p
+            cf = 2**p
 
         new_batch_size = b // cf
         if new_batch_size == 0:
             return x, False
 
-        return mx.concat(
-            [self.conv_forward(chunk) for chunk in mx.split(x, new_batch_size, 0)]
-        ), True
+        return (
+            mx.concat(
+                [self.conv_forward(chunk) for chunk in mx.split(x, new_batch_size, 0)]
+            ),
+            True,
+        )
 
     def __call__(self, x: mx.array, lengths: mx.array) -> tuple[mx.array, mx.array]:
+        """Forward pass for the subsampling layer.
+
+        Args:
+            x (mx.array): The input tensor (features).
+            lengths (mx.array): The lengths of the input sequences.
+
+        Returns:
+            A tuple containing the subsampled output tensor and the new lengths.
+        """
         for _ in range(self._sampling_num):
             lengths = (
                 mx.floor(
@@ -329,6 +434,20 @@ class DwStridingSubsampling(nn.Module):
 
 
 class Conformer(nn.Module):
+    """The main Conformer model.
+
+    This class assembles the full Conformer architecture, including the
+    subsampling layer, positional encoding, and a stack of Conformer blocks.
+
+    Args:
+        args (ConformerArgs): The conformer model configuration.
+    """
+
+    pre_encode: nn.Module
+    pos_enc: RelPositionalEncoding | LocalRelPositionalEncoding | None
+    layers: list[ConformerBlock]
+    args: ConformerArgs
+
     def __init__(self, args: ConformerArgs):
         super().__init__()
 
@@ -345,9 +464,11 @@ class Conformer(nn.Module):
                 d_model=args.d_model,
                 max_len=args.pos_emb_max_len,
                 scale_input=args.xscaling,
-                context_size=(args.att_context_size[0], args.att_context_size[1])
-                if args.att_context_size is not None
-                else (-1, -1),
+                context_size=(
+                    (args.att_context_size[0], args.att_context_size[1])
+                    if args.att_context_size is not None
+                    else (-1, -1)
+                ),
             )
         else:
             self.pos_enc = None
@@ -368,8 +489,16 @@ class Conformer(nn.Module):
     def set_attention_model(
         self,
         name: Literal["rel_pos", "rel_pos_local_attn", "normal"],
-        context_size: Optional[tuple[int, int]] = (256, 256),
+        context_size: tuple[int, int] | None = (256, 256),
     ):
+        """Dynamically sets the attention mechanism for the entire model.
+
+        This propagates the change to the positional encoding and all conformer blocks.
+
+        Args:
+            name: The type of attention model to use.
+            context_size: The context window size for local attention.
+        """
         if name == "rel_pos":
             self.pos_enc = RelPositionalEncoding(
                 d_model=self.args.d_model,
@@ -392,6 +521,19 @@ class Conformer(nn.Module):
     def __call__(
         self, x: mx.array, lengths: mx.array | None = None, cache=None
     ) -> tuple[mx.array, mx.array]:
+        """The main forward pass for the Conformer model.
+
+        Args:
+            x (mx.array): The input feature tensor.
+            lengths (mx.array | None): The lengths of the input sequences.
+            cache: An optional cache for incremental decoding.
+
+        Returns:
+            A tuple containing the output tensor and the output lengths.
+
+        Raises:
+            NotImplementedError: If an unsupported pre-encoding layer is configured.
+        """
         if lengths is None:
             lengths = mx.full(
                 (x.shape[0],),
@@ -417,7 +559,7 @@ class Conformer(nn.Module):
                 offset=cache[0].offset if cache[0] is not None else 0,  # type: ignore
             )
 
-        for layer, c in zip(self.layers, cache):
+        for layer, c in zip(self.layers, cache, strict=False):
             x = layer(x, pos_emb=pos_emb, cache=c)
 
         return x, out_lengths

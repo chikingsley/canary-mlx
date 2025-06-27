@@ -266,9 +266,9 @@ class ParakeetTDT(BaseParakeet):
         config: DecodingConfig = DecodingConfig(),
     ) -> tuple[list[list[AlignedToken]], list[Optional[tuple[mx.array, mx.array]]]]:
         """Run TDT decoder with features, optional length and decoder state. Outputs list[list[AlignedToken]] and updated hidden state"""
-        assert config.decoding == "greedy", (
-            "Only greedy decoding is supported for TDT decoder now"
-        )
+        assert (
+            config.decoding == "greedy"
+        ), "Only greedy decoding is supported for TDT decoder now"
 
         B, S, *_ = features.shape
 
@@ -294,9 +294,11 @@ class ParakeetTDT(BaseParakeet):
             while step < length:
                 # decoder pass
                 decoder_out, (hidden, cell) = self.decoder(
-                    mx.array([[last_token[batch]]])
-                    if last_token[batch] is not None
-                    else None,
+                    (
+                        mx.array([[last_token[batch]]])
+                        if last_token[batch] is not None
+                        else None
+                    ),
                     hidden_state[batch],
                 )
                 decoder_out = decoder_out.astype(feature.dtype)
@@ -394,9 +396,9 @@ class ParakeetRNNT(BaseParakeet):
         config: DecodingConfig = DecodingConfig(),
     ) -> tuple[list[list[AlignedToken]], list[Optional[tuple[mx.array, mx.array]]]]:
         """Run TDT decoder with features, optional length and decoder state. Outputs list[list[AlignedToken]] and updated hidden state"""
-        assert config.decoding == "greedy", (
-            "Only greedy decoding is supported for RNNT decoder now"
-        )
+        assert (
+            config.decoding == "greedy"
+        ), "Only greedy decoding is supported for RNNT decoder now"
 
         B, S, *_ = features.shape
 
@@ -422,9 +424,11 @@ class ParakeetRNNT(BaseParakeet):
             while step < length:
                 # decoder pass
                 decoder_out, (hidden, cell) = self.decoder(
-                    mx.array([[last_token[batch]]])
-                    if last_token[batch] is not None
-                    else None,
+                    (
+                        mx.array([[last_token[batch]]])
+                        if last_token[batch] is not None
+                        else None
+                    ),
                     hidden_state[batch],
                 )
                 decoder_out = decoder_out.astype(feature.dtype)
@@ -614,7 +618,8 @@ class ParakeetCTC(BaseParakeet):
 class ParakeetTDTCTC(ParakeetTDT):
     """MLX Implementation of Parakeet-TDT-CTC Model
 
-    Has ConvASRDecoder decoder in `.ctc_decoder` but `.generate` uses TDT decoder all the times (Please open an issue if you need CTC decoder use-case!)"""
+    Has ConvASRDecoder decoder in `.ctc_decoder` but `.generate` uses TDT decoder all the times (Please open an issue if you need CTC decoder use-case!)
+    """
 
     def __init__(self, args: ParakeetTDTCTCArgs):
         super().__init__(args)

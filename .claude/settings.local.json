@@ -16,7 +16,8 @@
       "Bash(mv:*)",
       "mcp__zen__analyze",
       "Bash(uv sync:*)",
-      "Bash(uv pip install:*)"
+      "Bash(uv pip install:*)",
+      "Bash(grep:*)"
     ],
     "deny": []
   }
