@@ -17,7 +17,9 @@
       "mcp__zen__analyze",
       "Bash(uv sync:*)",
       "Bash(uv pip install:*)",
-      "Bash(grep:*)"
+      "Bash(grep:*)",
+      "mcp__Context7__resolve-library-id",
+      "mcp__brave-search__brave_web_search"
     ],
     "deny": []
   }

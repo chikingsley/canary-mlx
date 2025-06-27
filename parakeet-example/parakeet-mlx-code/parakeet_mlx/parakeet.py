@@ -603,11 +603,17 @@ class ParakeetCTC(BaseParakeet):
         Args:
             features: Encoded audio features from the encoder.
             lengths: Sequence lengths for each batch item.
-            config: Decoding configuration.
+            config: Decoding configuration
+            - (Currently implemented) Greedy/best path
+            - (Not implemented) Beam search and lexicon based decoding
 
         Returns:
             list[list[AlignedToken]]: List of decoded token sequences.
         """
+        assert (
+            config.decoding == "greedy"
+        ), "Only greedy decoding is supported for CTC decoder now"
+
         B, S, *_ = features.shape
 
         logits = self.decoder(features)
