@@ -232,9 +232,22 @@ canary-models/
 archive/
 mlx-reference/
 parakeet-models/
+buzz/
 
 # Models
 canary-180m-flash-mlx/
 parakeet-example/parakeet-models/
 whisper-example/whisper-models/
 test-transcription/
+canary-example/canary-models/
+
+# Model file patterns
+*.nemo
+*.ckpt
+*.safetensors
+*.npz
+*.bin
+*.mlmodelc
+weights.npz
+model_weights.ckpt
+model.safetensors
